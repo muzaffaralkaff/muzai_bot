@@ -11,7 +11,7 @@ logging.basicConfig(
 )
 
 # 1. Masukkan Key & Token korang kat sini (atau guna Environment Variables kat Render)
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8972960445:AAG4...") # Masukkan token bot Telegram korang
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8972960445:AAGzQuOCOOlDBq13Hb6lTkKc2cbPl8Brl9s") # Masukkan token bot Telegram korang
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "MASUKKAN_GEMINI_API_KEY_KAU_KAT_SINI") # Masukkan Gemini API Key
 
 # Configure Gemini AI
