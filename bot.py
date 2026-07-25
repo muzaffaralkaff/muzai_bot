@@ -1,48 +1,75 @@
 import os
-import logging
-from telegram import Update
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
-import google.generativeai as genai
+import requests
+from flask import Flask, request, jsonify
 
-# Enable logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+app = Flask(__name__)
 
-# 1. Masukkan Key & Token korang kat sini (atau guna Environment Variables kat Render)
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8972960445:AAGzQuOCOOlDBq13Hb6lTkKc2cbPl8Brl9s") # Masukkan token bot Telegram korang
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "MASUKKAN_GEMINI_API_KEY_KAU_KAT_SINI") # Masukkan Gemini API Key
+# Ambil token dari Render environment variable
+TOKEN = os.environ['BOT_TOKEN']
+TELEGRAM_API = f"https://api.telegram.org/bot{TOKEN}"
+colab_url = None  # Akan diisi guna /setcolab
 
-# Configure Gemini AI
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-1.5-flash")
+def send_message(chat_id, text):
+    url = f"{TELEGRAM_API}/sendMessage"
+    requests.post(url, json={'chat_id': chat_id, 'text': text})
 
-# Fungsi bila tekan /start kat Telegram
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Salam bro! Muz AI OS dah sedia online 24/7. Tanyakan apa-apa soalan!")
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    data = request.json
+    if 'message' not in data:
+        return 'ok'
 
-# Fungsi bila mesej biasa dihantar kat Telegram
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_text = update.message.text
-    try:
-        # Hantar soalan pengguna ke Gemini AI
-        response = model.generate_content(user_text)
-        bot_reply = response.text
-    except Exception as e:
-        bot_reply = f"Maaf bro, ada masalah teknikal: {e}"
+    msg = data['message']
+    chat_id = msg['chat']['id']
+    text = msg.get('text', '')
 
-    # Balas balik mesej kat Telegram
-    await update.message.reply_text(bot_reply)
+    if text == '/start':
+        send_message(chat_id, "Jarvis Design bot ready. Guna /setcolab <url> untuk link Colab, kemudian /generate <prompt>")
+    elif text.startswith('/setcolab'):
+        global colab_url
+        parts = text.split(' ', 1)
+        if len(parts) == 2:
+            colab_url = parts[1].strip('/')
+            send_message(chat_id, f"✅ Colab URL diset ke: {colab_url}")
+        else:
+            send_message(chat_id, "Format: /setcolab https://xxxx.ngrok.io")
+    elif text.startswith('/generate'):
+        if not colab_url:
+            send_message(chat_id, "Sila set Colab URL dulu guna /setcolab")
+        else:
+            prompt = text.split(' ', 1)[1] if ' ' in text else ''
+            if not prompt:
+                send_message(chat_id, "Sila beri prompt. Contoh: /generate kucing angkasa")
+                return 'ok'
+
+            # Hantar POST ke Colab
+            try:
+                resp = requests.post(f"{colab_url}/generate", json={'prompt': prompt}, timeout=120)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    img_url = data.get('image_url')
+                    if img_url:
+                        # Download gambar dan hantar ke Telegram
+                        img_data = requests.get(img_url).content
+                        requests.post(f"{TELEGRAM_API}/sendPhoto",
+                                      files={'photo': ('result.png', img_data)},
+                                      data={'chat_id': chat_id})
+                    else:
+                        send_message(chat_id, "Colab respon tapi tiada image_url.")
+                else:
+                    send_message(chat_id, f"Colab return error {resp.status_code}: {resp.text}")
+            except Exception as e:
+                send_message(chat_id, f"Gagal hubungi Colab: {str(e)}")
+    else:
+        send_message(chat_id, "Command tidak dikenali. Guna /start untuk bantuan.")
+
+    return 'ok'
 
 if __name__ == '__main__':
-    # Bina aplikasi bot Telegram
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-
-    # Tambah handler
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
-
-    print("Bot Muz AI OS sedang berjalan 24/7...")
-    app.run_polling()
-  
+    # Auto-set webhook bila app mula
+    render_url = os.environ.get('RENDER_EXTERNAL_URL')
+    if render_url:
+        webhook_url = f"{render_url}/webhook"
+        requests.post(f"{TELEGRAM_API}/setWebhook", json={'url': webhook_url})
+        print(f"Webhook set to {webhook_url}")
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
